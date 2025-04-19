@@ -8,8 +8,17 @@ logs
 **/*.backup.*
 **/*.back.*
 
-node_modules
+# Dependencies
+/node_modules
+/server/node_modules
+/client/node_modules
 bower_components
+
+# Build output
+/client/build
+
+# Environment variables
+.env
 
 *.sublime*
 
