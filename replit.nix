@@ -1,5 +1,6 @@
+
 { pkgs }: {
   deps = [
-    pkgs.nodejs_20 # Use a recent stable Node.js version
+    pkgs.nodejs-20_x # Use a recent stable Node.js version
   ];
 } 
