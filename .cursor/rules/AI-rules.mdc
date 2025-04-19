@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# AI Behavior
+
+When assisting with tasks, please be proactive. Instead of asking for confirmation before taking an action (like creating a file or editing code based on the request), proceed with the action directly. The user will provide feedback if the action is not desired.
