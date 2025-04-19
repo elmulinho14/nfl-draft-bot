@@ -78,7 +78,7 @@ app.get('/api/user', (req, res) => {
 app.get('/api/logout', (req, res) => {
   req.logout(function(err) {
     if (err) { return next(err); }
-    res.redirect('http://localhost:3000');
+    res.redirect('/');
   });
 });
 
@@ -89,6 +89,6 @@ app.get('*', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 }); 
