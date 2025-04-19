@@ -61,7 +61,7 @@ app.get('/auth/discord/callback',
     failureRedirect: '/' 
   }), 
   (req, res) => {
-    res.redirect(process.env.CLIENT_REDIRECT);
+    res.redirect('/welcome');
   }
 );
 
