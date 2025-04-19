@@ -10,7 +10,7 @@ run = ["sh", "-c", "cd server && npm install && npm start"]
 build = ["sh", "-c", "cd client && npm install && npm run build"]
 
 [workflows]
-runButton = "Dev Server"
+runButton = "Server Only"
 
 [[workflows.workflow]]
 name = "Dev Server"
@@ -24,6 +24,15 @@ args = "cd server && npm install && npm run dev"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd client && npm install && npm start"
+
+[[workflows.workflow]]
+name = "Server Only"
+author = 40200140
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd server && npm install && npm start"
 
 # Specify files/directories to always show in the file tree
 # visibleFiles = ["server", "client", ".replit", "README.md"] 
