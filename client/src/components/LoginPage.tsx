@@ -2,7 +2,7 @@ import React from 'react';
 
 const LoginPage: React.FC = () => {
   const handleDiscordLogin = () => {
-    window.location.href = 'http://localhost:5000/auth/discord';
+    window.location.href = '/auth/discord';
   };
 
   return (

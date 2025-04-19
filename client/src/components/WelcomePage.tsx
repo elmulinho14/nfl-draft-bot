@@ -18,7 +18,7 @@ const WelcomePage: React.FC = () => {
   useEffect(() => {
     const fetchUserData = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/user', {
+        const response = await axios.get('/api/user', {
           withCredentials: true
         });
         
@@ -40,7 +40,7 @@ const WelcomePage: React.FC = () => {
 
   const handleLogout = async () => {
     try {
-      await axios.get('http://localhost:5000/api/logout', {
+      await axios.get('/api/logout', {
         withCredentials: true
       });
       navigate('/');
