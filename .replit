@@ -6,11 +6,9 @@ language = "nodejs"
 
 [deployment]
 deploymentTarget = "cloudrun"
-run = ["sh", "-c", "cd server && npm install && npm start"]
-build = ["sh", "-c", "cd client && npm install && npm run build"]
+run = "cd server && npm install && cd ../client && npm install && npm run build && cd ../server && npm start"
 
 [workflows]
-runButton = "Dev Server"
 
 [[workflows.workflow]]
 name = "Dev Server"
@@ -37,6 +35,10 @@ args = "cd server && npm install && npm start"
 [[ports]]
 localPort = 3000
 externalPort = 3000
+
+[[ports]]
+localPort = 4000
+externalPort = 3001
 
 [[ports]]
 localPort = 5000
