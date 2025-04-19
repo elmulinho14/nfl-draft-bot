@@ -4,5 +4,9 @@ run = "cd server && npm install && cd ../client && npm install && npm run build 
 # Language configuration (optional but good practice)
 language = "nodejs"
 
+[deployment]
+deploymentTarget = "cloudrun"
+run = ["sh", "-c", "cd server && npm install && cd ../client && npm install && npm run build && cd ../server && npm start"]
+
 # Specify files/directories to always show in the file tree
 # visibleFiles = ["server", "client", ".replit", "README.md"] 
