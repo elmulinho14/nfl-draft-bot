@@ -6,7 +6,8 @@ language = "nodejs"
 
 [deployment]
 deploymentTarget = "cloudrun"
-run = ["sh", "-c", "cd server && npm install && cd ../client && npm install && npm run build && cd ../server && npm start"]
+run = ["sh", "-c", "cd server && npm install && npm start"]
+build = ["sh", "-c", "cd client && npm install && npm run build"]
 
 [workflows]
 runButton = "Dev Server"
