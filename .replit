@@ -10,7 +10,7 @@ run = ["sh", "-c", "cd server && npm install && npm start"]
 build = ["sh", "-c", "cd client && npm install && npm run build"]
 
 [workflows]
-runButton = "Server Only"
+runButton = "Dev Server"
 
 [[workflows.workflow]]
 name = "Dev Server"
@@ -33,6 +33,10 @@ mode = "sequential"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd server && npm install && npm start"
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
 
 [[ports]]
 localPort = 5000
