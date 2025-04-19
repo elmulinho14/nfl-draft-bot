@@ -1,0 +1,8 @@
+# The command Replit runs to start your project.
+run = "cd server && npm install && cd ../client && npm install && npm run build && cd ../server && npm start"
+
+# Language configuration (optional but good practice)
+language = "nodejs"
+
+# Specify files/directories to always show in the file tree
+# visibleFiles = ["server", "client", ".replit", "README.md"] 
