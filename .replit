@@ -8,5 +8,21 @@ language = "nodejs"
 deploymentTarget = "cloudrun"
 run = ["sh", "-c", "cd server && npm install && cd ../client && npm install && npm run build && cd ../server && npm start"]
 
+[workflows]
+runButton = "Dev Server"
+
+[[workflows.workflow]]
+name = "Dev Server"
+author = 40200140
+mode = "parallel"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd server && npm install && npm run dev"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd client && npm install && npm start"
+
 # Specify files/directories to always show in the file tree
 # visibleFiles = ["server", "client", ".replit", "README.md"] 
