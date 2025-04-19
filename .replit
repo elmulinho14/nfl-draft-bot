@@ -34,5 +34,9 @@ mode = "sequential"
 task = "shell.exec"
 args = "cd server && npm install && npm start"
 
+[[ports]]
+localPort = 5000
+externalPort = 80
+
 # Specify files/directories to always show in the file tree
 # visibleFiles = ["server", "client", ".replit", "README.md"] 
