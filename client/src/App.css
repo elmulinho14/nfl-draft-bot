@@ -5,7 +5,7 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
+  background-color: #e0f7fa;
 }
 
 .App {
@@ -121,4 +121,279 @@ body {
 
 .logout-btn:hover {
   background-color: #D03A3D;
+}
+
+/* Draft Page Styles */
+.draft-container {
+  display: flex;
+  gap: 20px;
+  width: 100%;
+  box-sizing: border-box;
+  height: calc(100vh - 60px);
+  /* min-height: calc(100vh - 50px); Remove or adjust min-height */
+}
+
+.team-panel, .player-panel {
+  padding: 15px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  background-color: #f9f9f9; /* Or keep separate backgrounds */
+  /* Add height and overflow */
+  height: 100%; /* Fill the height of draft-container */
+  overflow-y: auto; /* Enable vertical scrolling */
+  box-sizing: border-box; /* Include padding in height */
+}
+
+.team-panel {
+  width: 35%; /* Set fixed width */
+}
+
+/* Keep separate background for player panel if desired */
+.player-panel {
+  background-color: #fafafa; /* Lighter background */
+  width: 65%; /* Set fixed width */
+}
+
+/* Style for the player panel header containing H2 and Select */
+.player-panel-header {
+  display: flex;
+  /* justify-content: space-between; Remove this */
+  align-items: center; 
+  margin-bottom: 20px; 
+}
+
+.player-panel-header h2 {
+  margin: 0; 
+  flex-grow: 1; /* Allow H2 to take up space */
+  text-align: center; /* Center the text within its space */
+  /* Add margin if needed to visually center between start and dropdown */
+}
+
+.position-filter-dropdown {
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  /* Add other styling as desired */
+}
+
+.team-panel h2, .player-panel h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+/* Styles for the unified draft list */
+.full-draft-list {
+  list-style: none;
+  padding: 0;
+  margin: 0; /* Remove default list margin */
+}
+
+/* Styles for team list items to include logos */
+.team-list-item {
+  display: flex;
+  align-items: center; 
+  margin-bottom: 5px; 
+  padding: 6px 10px; 
+  border-radius: 4px; 
+  color: white; 
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7); 
+  transition: transform 0.1s ease-in-out; 
+  height: 50px; /* Increased fixed height */
+  box-sizing: border-box; /* Ensure padding is included in height */
+  font-size: 1.1em; /* Increased font size */
+  font-weight: bold; /* Make text bold */
+}
+
+.team-list-item:hover {
+  transform: scale(1.01); /* Slightly enlarge on hover */
+}
+
+.team-logo {
+  width: 25px; /* Adjust size as needed */
+  height: auto;
+  margin: 0 8px; /* Add margin to left and right */
+  object-fit: contain; /* Prevent distortion */
+  flex-shrink: 0; /* Prevent logo from shrinking */
+}
+
+/* Optional: Style for pick number and team name spans if needed */
+.pick-number {
+  /* font-weight: bold; Remove as it's now inherited */
+  min-width: 25px; /* Give it some minimum width */
+  text-align: right;
+}
+
+.team-name-player {
+  /* Allow this span to grow and potentially wrap */
+  flex-grow: 1;
+  text-align: left;
+}
+
+/* Style for the team change dropdown */
+.team-change-dropdown {
+  font-size: 0.9em; /* Slightly smaller font */
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  margin-left: 5px; /* Adjust spacing */
+  flex-grow: 1; /* Allow dropdown to take space */
+  /* Consider background/color if needed for contrast */
+  background-color: rgba(255, 255, 255, 0.8);
+  color: #000;
+  font-weight: normal; /* Override bold inherited from list item */
+}
+
+/* Highlighting for the team currently on the clock */
+.team-list-item.on-the-clock {
+  font-weight: bold;
+  outline: 3px solid #FFD700; 
+  outline-offset: -1px; 
+  transform: scale(1.02); 
+  z-index: 1; 
+  position: relative; 
+  /* Ensure dropdown fits */
+  align-items: center; /* Keep vertical alignment */
+}
+
+/* Override default App centering for draft page */
+.App > .draft-container {
+  justify-content: flex-start; /* Align draft container to top */
+  align-items: stretch; /* Stretch items to fill container */
+}
+
+/* Optional: Add some basic styling for other elements */
+h2, h3, h4 {
+  margin-top: 0;
+}
+
+/* Player Panel Styles */
+.player-list {
+  list-style: none;
+  padding: 0;
+}
+
+.player-card {
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  /* border: 1px solid #eee; Remove basic border */
+  padding: 8px 12px; /* Adjust padding as needed */
+  margin-bottom: 8px; /* Space between cards */
+  border-radius: 5px; /* Rounded corners */
+  background-color: #fff; /* Will be overridden by inline style, but good fallback */
+  color: white; /* Default text to white for contrast */
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6); /* Add shadow for readability */
+  min-height: 60px; /* Ensure a minimum height */
+  box-sizing: border-box;
+}
+
+/* New styles for basic info + table layout */
+.player-card-info {
+  display: flex; /* Arrange basic info and table side-by-side */
+  flex-grow: 1; /* Allow this container to take space */
+  margin-right: 15px; /* Space before button */
+  gap: 20px; /* Space between basic info and table */
+  align-items: flex-start; /* Align items to the top */
+  font-size: 0.9em;
+  color: white; /* Ensure text in basic info is also white */
+}
+
+.player-basic-info {
+  flex-shrink: 0; /* Prevent basic info from shrinking */
+  white-space: nowrap; /* Keep basic info together */
+}
+
+.player-details-table {
+  border-collapse: collapse;
+  width: 100%; /* Make table take remaining width */
+  font-size: 0.85em; /* Smaller font for table data */
+  color: #333; /* Make table text dark for better contrast on light header */
+}
+
+.player-details-table th,
+.player-details-table td {
+  border: 1px solid #ddd;
+  padding: 4px 6px;
+  text-align: center;
+  background-color: rgba(255, 255, 255, 0.7); /* Slightly transparent white background for table cells */
+}
+
+.player-details-table th {
+  background-color: rgba(242, 242, 242, 0.8); /* Slightly more opaque for header */
+  font-weight: normal;
+  color: #000; /* Black text for header */
+}
+
+.pick-button {
+  padding: 5px 10px;
+  cursor: pointer;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 3px;
+}
+
+.pick-button:hover {
+  background-color: #0056b3;
+}
+
+/* Styling for the player name search input */
+.player-name-search {
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  margin-right: 15px; /* Space between search and H2 */
+  min-width: 150px; /* Give it some base width */
+}
+
+/* Style for the Submit Draft button */
+.submit-draft-button {
+  display: block; /* Make it a block element */
+  width: calc(100% - 20px); /* Full width minus some padding */
+  padding: 12px;
+  margin: 20px auto 10px auto; /* Center with margin */
+  font-size: 1.1em;
+  font-weight: bold;
+  color: white;
+  background-color: #28a745; /* Green color */
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.submit-draft-button:hover {
+  background-color: #218838; /* Darker green on hover */
+}
+
+/* Styles for Grading Results Section */
+.grading-results-container {
+  margin: 20px;
+  padding: 20px;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.grading-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 15px;
+}
+
+.grading-table th,
+.grading-table td {
+  border: 1px solid #ddd;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.grading-table th {
+  background-color: #f2f2f2;
+  font-weight: bold;
+}
+
+.grading-table tbody tr:nth-child(even) {
+  background-color: #f9f9f9;
 }

@@ -7,7 +7,7 @@ const LoginPage: React.FC = () => {
 
   return (
     <div className="login-container">
-      <h1>Welcome to Our App</h1>
+      <h1>Jags Server Draft Competition</h1>
       <p>Please log in with your Discord account to continue</p>
       <button 
         className="discord-login-btn"
