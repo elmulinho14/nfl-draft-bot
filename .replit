@@ -6,7 +6,7 @@ language = "nodejs"
 
 [deployment]
 deploymentTarget = "cloudrun"
-run = ["sh", "-c", "cd server && NODE_ENV=production npm install && NODE_ENV=production npm start"]
+run = ["sh", "-c", "cd server && NODE_ENV=production PORT=3000 npm install && NODE_ENV=production PORT=3000 npm start"]
 build = ["sh", "-c", "cd client && npm install && npm run build"]
 
 [workflows]
@@ -35,13 +35,6 @@ args = "cd server && npm install && npm start"
 
 [[ports]]
 localPort = 3000
-externalPort = 3000
-
-[[ports]]
-localPort = 4000
-
-[[ports]]
-localPort = 5000
 externalPort = 80
 
 # Specify files/directories to always show in the file tree
