@@ -275,7 +275,8 @@ h2, h3, h4 {
 
 .player-card {
   display: flex; 
-  align-items: center; 
+  flex-direction: column;
+  align-items: stretch;
   justify-content: space-between; 
   /* border: 1px solid #eee; Remove basic border */
   padding: 8px 12px; /* Adjust padding as needed */
@@ -432,7 +433,7 @@ h2, h3, h4 {
     flex-direction: column; /* Stack basic info and table */
     align-items: stretch; /* Stretch items full width */
     gap: 10px;
-    margin-right: 10px; /* Slightly reduce margin */
+    margin-bottom: 10px; /* Add margin below info, before button */
   }
 
   .player-basic-info {
@@ -453,8 +454,11 @@ h2, h3, h4 {
   }
 
   .player-card {
-     min-height: 0; /* Remove min height */
-     padding: 6px 8px;
+    display: flex; /* Ensure it's still flex */
+    flex-direction: column; /* Stack items vertically */
+    align-items: stretch; /* Stretch items horizontally */
+    min-height: 0; /* Remove min height */
+    padding: 6px 8px;
   }
 
   .team-list-item {
@@ -467,5 +471,12 @@ h2, h3, h4 {
   .submit-draft-button {
     font-size: 1em;
     padding: 10px;
+  }
+
+  .pick-button { /* Style button specifically for mobile */
+     margin-top: auto; /* Push button to bottom if card has extra space */
+     align-self: center; /* Center button */
+     padding: 8px 15px; /* Slightly larger padding */
+     width: auto; /* Allow button to size to content */
   }
 }
