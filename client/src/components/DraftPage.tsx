@@ -457,22 +457,25 @@ const DraftPage: React.FC = () => {
                         School: {player.school}<br />
                         Age: {player.age}
                       </div>
-                      <table className="player-details-table">
-                        <thead>
-                          <tr>
-                            <th>Height</th><th>Weight</th><th>Hand</th><th>Arm</th><th>Wing</th>
-                            <th>40yd</th><th>10yd</th><th>Vert</th><th>Broad</th>
-                            <th>3C</th><th>Shuttle</th><th>Bench</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td>{player.height}</td><td>{player.weight}</td><td>{player.hand}</td><td>{player.arm}</td><td>{player.wing}</td>
-                            <td>{player.fortyYdDash}</td><td>{player.tenYdSplit}</td><td>{player.vertJump}</td><td>{player.broadJump}</td>
-                            <td>{player.threeCone}</td><td>{player.shuttle}</td><td>{player.bench}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                      {/* Table for detailed stats - Wrapped for mobile scrolling */}
+                      <div className="player-details-table-wrapper">
+                        <table className="player-details-table">
+                          <thead>
+                            <tr>
+                              <th>Height</th><th>Weight</th><th>Hand</th><th>Arm</th><th>Wing</th>
+                              <th>40yd</th><th>10yd</th><th>Vert</th><th>Broad</th>
+                              <th>3C</th><th>Shuttle</th><th>Bench</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td>{player.height}</td><td>{player.weight}</td><td>{player.hand}</td><td>{player.arm}</td><td>{player.wing}</td>
+                              <td>{player.fortyYdDash}</td><td>{player.tenYdSplit}</td><td>{player.vertJump}</td><td>{player.broadJump}</td>
+                              <td>{player.threeCone}</td><td>{player.shuttle}</td><td>{player.bench}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                     <button onClick={() => handlePickPlayer(player)} className="pick-button">
                       Pick

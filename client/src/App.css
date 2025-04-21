@@ -397,3 +397,75 @@ h2, h3, h4 {
 .grading-table tbody tr:nth-child(even) {
   background-color: #f9f9f9;
 }
+
+/* --- Media Queries for Responsiveness --- */
+
+@media (max-width: 768px) { /* Adjust breakpoint as needed */
+  
+  .draft-container {
+    flex-direction: column; /* Stack panels vertically */
+    height: auto; /* Allow height to adjust to content */
+    gap: 10px; /* Reduce gap */
+  }
+
+  .team-panel, .player-panel {
+    width: 100%; /* Full width for stacked panels */
+    height: auto; /* Adjust height */
+    max-height: 50vh; /* Limit height and rely on internal scroll */
+    overflow-y: auto; /* Ensure scrolling is still enabled */
+    margin-bottom: 10px;
+  }
+
+  .player-panel-header {
+    flex-wrap: wrap; /* Allow header items to wrap */
+    justify-content: center; /* Center items when wrapped */
+    gap: 10px;
+  }
+
+  .player-panel-header h2 {
+     width: 100%; /* Make header take full width */
+     order: -1; /* Move header to the top when wrapped */
+     margin-left: 0; /* Remove any specific margins */
+  }
+
+  .player-card-info {
+    flex-direction: column; /* Stack basic info and table */
+    align-items: stretch; /* Stretch items full width */
+    gap: 10px;
+    margin-right: 10px; /* Slightly reduce margin */
+  }
+
+  .player-basic-info {
+    white-space: normal; /* Allow text wrapping */
+    text-align: center;
+  }
+
+  /* Enable horizontal scrolling for the table wrapper */
+  .player-details-table-wrapper {
+    overflow-x: auto;
+    width: 100%; /* Ensure wrapper takes available width */
+  }
+
+  .player-details-table {
+    white-space: nowrap; /* Prevent table content from wrapping */
+    width: auto; /* Allow table to be wider than container */
+    font-size: 0.8em; /* Slightly smaller font */
+  }
+
+  .player-card {
+     min-height: 0; /* Remove min height */
+     padding: 6px 8px;
+  }
+
+  .team-list-item {
+     font-size: 1em; /* Slightly smaller font */
+     height: auto; /* Allow height to adjust */
+     min-height: 40px;
+     padding: 4px 8px;
+  }
+
+  .submit-draft-button {
+    font-size: 1em;
+    padding: 10px;
+  }
+}
