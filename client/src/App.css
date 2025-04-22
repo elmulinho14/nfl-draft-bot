@@ -329,14 +329,36 @@ h2, h3, h4 {
 .pick-button {
   padding: 5px 10px;
   cursor: pointer;
-  background-color: #007bff;
+  background-color: #000000; /* Changed to black */
   color: white;
   border: none;
   border-radius: 3px;
+  font-size: 1em; /* Increased font size */
+  font-weight: bold;
+  min-width: 60px;
+  text-align: center;
+  transition: background-color 0.2s;
 }
 
 .pick-button:hover {
-  background-color: #0056b3;
+  background-color: #333333; /* Changed to dark grey */
+}
+
+/* Added Undo Button Styling */
+.undo-button {
+  background-color: #ffc107; /* Example: Warning yellow */
+  color: #212529; /* Dark text for contrast */
+  border: none;
+  padding: 5px 10px;
+  font-size: 0.9em;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  margin-left: 10px; /* Add some space if needed */
+}
+
+.undo-button:hover {
+  background-color: #e0a800; /* Darker yellow on hover */
 }
 
 /* Styling for the player name search input */
@@ -478,5 +500,6 @@ h2, h3, h4 {
      align-self: center; /* Center button */
      padding: 8px 15px; /* Slightly larger padding */
      width: auto; /* Allow button to size to content */
+     font-size: 1em; /* Ensure mobile size is readable */
   }
 }

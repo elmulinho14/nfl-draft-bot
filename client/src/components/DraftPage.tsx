@@ -55,6 +55,7 @@ interface Player {
   threeCone: string;
   shuttle: string;
   bench: string;
+  originalIndex: number;
 }
 
 interface Team {
@@ -240,6 +241,7 @@ const DraftPage: React.FC = () => {
             threeCone: row['3 Cone'] || 'N/A',
             shuttle: row['Shuttle'] || 'N/A',
             bench: row['Bench'] || 'N/A',
+            originalIndex: index
           };
         });
 
@@ -304,6 +306,37 @@ const DraftPage: React.FC = () => {
       return pick;
     });
     setPicks(updatedPicks);
+  };
+
+  // Function to undo the last pick
+  const handleUndoPick = () => {
+    if (currentPickIndex === 0) return; // Cannot undo if no picks made
+
+    const lastPickIndex = currentPickIndex - 1;
+    const pickToUndo = picks[lastPickIndex];
+
+    if (!pickToUndo || !pickToUndo.player) return; // Nothing to undo for this pick index
+
+    // Restore the player to the available list
+    const playerToRestore = pickToUndo.player;
+    setAvailablePlayers(prev => 
+      // Sort by original index to maintain order
+      [...prev, playerToRestore].sort((a, b) => a.originalIndex - b.originalIndex)
+    ); 
+
+    // Clear the player from the pick in the picks array
+    const updatedPicks = [...picks];
+    updatedPicks[lastPickIndex].player = null;
+    setPicks(updatedPicks);
+
+    // Move the current pick index back
+    setCurrentPickIndex(lastPickIndex);
+
+    // Ensure draft is not marked complete
+    if (draftComplete) {
+      setDraftComplete(false);
+    }
+    console.log(`Undo complete for pick ${lastPickIndex + 1}`);
   };
 
   // Function to handle draft submission
@@ -427,6 +460,12 @@ const DraftPage: React.FC = () => {
             className="player-name-search"
           />
           <h2>Available Players</h2>
+          {/* Add Undo Button if applicable */} 
+          {currentPickIndex > 0 && !draftComplete && (
+            <button onClick={handleUndoPick} className="undo-button">
+              <i className="fas fa-undo"></i> Undo
+            </button>
+          )}
           <select
             value={selectedPositionFilter}
             onChange={(e) => setSelectedPositionFilter(e.target.value)}

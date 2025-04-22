@@ -327,6 +327,40 @@ const AdminDraftPage: React.FC = () => {
     setPicks(updatedPicks);
   };
 
+  // Function to undo the last pick
+  const handleUndoPick = () => {
+    if (currentPickIndex === 0) return; // Cannot undo if no picks made
+
+    const lastPickIndex = currentPickIndex - 1;
+    const pickToUndo = picks[lastPickIndex];
+
+    if (!pickToUndo || !pickToUndo.player) return; // Nothing to undo for this pick index
+
+    // Restore the player to the available list
+    const playerToRestore = pickToUndo.player;
+    setAvailablePlayers(prev => 
+      [...prev, playerToRestore].sort((a, b) => {
+        const nameA = a?.name?.toLowerCase() || '';
+        const nameB = b?.name?.toLowerCase() || '';
+        return nameA.localeCompare(nameB);
+      })
+    );
+
+    // Clear the player from the pick in the picks array
+    const updatedPicks = [...picks];
+    updatedPicks[lastPickIndex].player = null;
+    setPicks(updatedPicks);
+
+    // Move the current pick index back
+    setCurrentPickIndex(lastPickIndex);
+
+    // Ensure draft is not marked complete
+    if (draftComplete) {
+      setDraftComplete(false);
+    }
+    console.log(`Admin Undo complete for pick ${lastPickIndex + 1}`);
+  };
+
   // Function to handle ACTUAL draft submission
   const handleSubmitActualDraft = async () => {
     if (!draftComplete) {
@@ -451,6 +485,12 @@ const AdminDraftPage: React.FC = () => {
               className="player-name-search"
             />
             <h2>Available Players</h2>
+            {/* Add Undo Button if applicable */} 
+            {currentPickIndex > 0 && !draftComplete && (
+              <button onClick={handleUndoPick} className="undo-button">
+                 <i className="fas fa-undo"></i> Undo
+              </button>
+            )}
             <select
               value={selectedPositionFilter}
               onChange={(e) => setSelectedPositionFilter(e.target.value)}
