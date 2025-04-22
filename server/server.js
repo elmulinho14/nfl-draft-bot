@@ -3,7 +3,7 @@ const session = require('express-session');
 const passport = require('passport');
 const DiscordStrategy = require('passport-discord').Strategy;
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose(); // Import SQLite
+const { Pool } = require('pg'); // Import pg Pool
 const { v4: uuidv4 } = require('uuid'); // Import uuid
 require('dotenv').config();
 const path = require('path');
@@ -11,17 +11,32 @@ const path = require('path');
 const app = express();
 const PORT = process.env.NODE_ENV === 'production' ? 3000 : (process.env.PORT || 5000);
 
-// --- SQLite Database Setup ---
-const dbPath = path.join(__dirname, 'mockDrafts.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error opening database', err.message);
-  } else {
-    console.log('Connected to the SQLite database.');
-    // Create table with new structure if it doesn't exist
-    db.run(`CREATE TABLE IF NOT EXISTS mock_draft_picks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      submission_id TEXT NOT NULL, -- UUID for grouping picks
+// --- PostgreSQL Database Setup ---
+// Use DATABASE_URL from .env
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // You might need SSL configuration depending on your PostgreSQL hosting
+  // ssl: {
+  //   rejectUnauthorized: false // Example, adjust based on your needs
+  // }
+});
+
+pool.on('connect', () => {
+  console.log('Connected to the PostgreSQL database.');
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+  process.exit(-1);
+});
+
+// Function to initialize the database schema
+const initializeDb = async () => {
+  try {
+    // Create mock_draft_picks table with PostgreSQL syntax
+    await pool.query(`CREATE TABLE IF NOT EXISTS mock_draft_picks (
+      id SERIAL PRIMARY KEY, 
+      submission_id TEXT NOT NULL, 
       user_id TEXT,
       user_name TEXT,
       pick_number INTEGER NOT NULL,
@@ -29,27 +44,34 @@ const db = new sqlite3.Database(dbPath, (err) => {
       player_name TEXT,
       player_position TEXT,
       player_school TEXT,
-      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP -- Timestamp for the submission group
-    )`, (err) => {
-      if (err) {
-        console.error('Error creating mock_draft_picks table', err.message);
-      }
-    });
-    // Create actual_draft_picks table
-    db.run(`CREATE TABLE IF NOT EXISTS actual_draft_picks (
+      submitted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP 
+    )`);
+    console.log('mock_draft_picks table checked/created.');
+
+    // Create actual_draft_picks table with PostgreSQL syntax
+    await pool.query(`CREATE TABLE IF NOT EXISTS actual_draft_picks (
       pick_number INTEGER PRIMARY KEY,
       team_name TEXT NOT NULL,
       player_name TEXT,
       player_position TEXT,
       player_school TEXT,
-      submitted_at DATETIME
-    )`, (err) => {
-      if (err) {
-        console.error('Error creating actual_draft_picks table', err.message);
-      }
-    });
+      submitted_at TIMESTAMPTZ 
+    )`);
+    console.log('actual_draft_picks table checked/created.');
+
+    // Add index for faster user draft lookups
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mock_draft_user_id ON mock_draft_picks(user_id)`);
+    console.log('Index on mock_draft_picks(user_id) checked/created.');
+
+  } catch (err) {
+    console.error('Error initializing database schema:', err.message);
+    // Consider exiting if schema setup fails critically
+    // process.exit(1); 
   }
-});
+};
+
+// Initialize DB schema on startup
+initializeDb();
 
 // Middleware
 app.use(cors({
@@ -82,7 +104,8 @@ passport.use(new DiscordStrategy({
   scope: ['identify', 'email']
 }, 
 function(accessToken, refreshToken, profile, done) {
-  // In a real application, you'd typically save the profile to a database
+  // Store or retrieve user from DB here if needed
+  // For now, just passing the profile through
   return done(null, profile);
 }));
 
@@ -103,25 +126,39 @@ app.get('/auth/discord/callback',
     failureRedirect: '/' 
   }), 
   (req, res) => {
+    // Successful authentication, redirect to a logged-in page.
     // Redirect to the draft page after successful login
-    res.redirect('/draft'); 
+    res.redirect(process.env.CLIENT_REDIRECT || '/draft'); 
   }
 );
 
 app.get('/api/user', (req, res) => {
-  if (req.user) {
+  if (req.isAuthenticated() && req.user) {
     res.json({
-      user: req.user
+      user: { 
+        id: req.user.id, 
+        username: req.user.username, 
+        avatar: req.user.avatar,
+        discriminator: req.user.discriminator
+        // Add other relevant fields, avoid sending secrets/tokens
+      }
     });
   } else {
     res.status(401).json({ error: 'Not authenticated' });
   }
 });
 
-app.get('/api/logout', (req, res) => {
+app.get('/api/logout', (req, res, next) => {
   req.logout(function(err) {
     if (err) { return next(err); }
-    res.redirect('/');
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("Session destruction error:", err);
+        return next(err);
+      }
+      res.clearCookie('connect.sid');
+      res.status(200).json({ message: 'Logged out successfully' });
+    });
   });
 });
 
@@ -130,25 +167,13 @@ const isAdmin = (req, res, next) => {
   if (req.isAuthenticated() && req.user && req.user.username === 'alex952323') {
     return next();
   } else {
+    console.warn(`Admin access denied for user: ${req.user ? req.user.username : 'unauthenticated'}`);
     res.status(403).json({ error: 'Forbidden: Admin access required' });
   }
 };
 
-// Promisify db.run for async/await usage
-const runAsync = (sql, params) => {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function(err) { // Use function to access this.lastID/changes if needed
-      if (err) {
-        reject(err);
-      } else {
-        resolve(this); // Resolve with the statement context
-      }
-    });
-  });
-};
-
-// --- API Endpoint for Mock Draft Submission --- (Refactored for async/await)
-app.post('/api/drafts', async (req, res) => { // Make handler async
+// --- API Endpoint for Mock Draft Submission --- (Refactored for pg and async/await)
+app.post('/api/drafts', async (req, res) => {
   if (!req.isAuthenticated() || !req.user) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
@@ -157,29 +182,29 @@ app.post('/api/drafts', async (req, res) => { // Make handler async
   const userId = req.user.id;
   const userName = req.user.username;
   const submissionId = uuidv4();
-  const submissionTimestamp = new Date().toISOString();
+  const submissionTimestamp = new Date();
 
   if (!picks || !Array.isArray(picks) || picks.length === 0) {
     return res.status(400).json({ error: 'Invalid draft data provided' });
   }
 
+  const client = await pool.connect();
+
   try {
-    // Start transaction
-    await runAsync('BEGIN TRANSACTION', []);
+    await client.query('BEGIN');
 
-    // Delete previous picks
-    const deleteSql = `DELETE FROM mock_draft_picks WHERE user_id = ?`;
-    await runAsync(deleteSql, [userId]);
+    // Explicitly delete ALL previous picks for this USERNAME instead of user_id
+    const deleteSql = `DELETE FROM mock_draft_picks WHERE user_name = $1`;
+    await client.query(deleteSql, [userName]);
 
-    // Prepare insert statement (still synchronous)
     const insertSql = `INSERT INTO mock_draft_picks (
       submission_id, user_id, user_name, pick_number, 
       team_name, player_name, player_position, player_school, submitted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    const stmt = db.prepare(insertSql); 
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
+    
+    // Track insertion results
+    let successCount = 0;
 
-    // Execute inserts sequentially using await
-    let successfulInserts = 0;
     for (const pick of picks) {
       const pickNumber = pick.team?.pick;
       const teamName = pick.team?.name;
@@ -188,266 +213,473 @@ app.post('/api/drafts', async (req, res) => { // Make handler async
       const playerSchool = pick.player?.school || null;
 
       if (pickNumber === undefined || !teamName) {
-        console.error(`[Draft Submit ${submissionId}] Invalid pick data found, rolling back:`, pick);
-        await runAsync('ROLLBACK', []);
+        await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Invalid pick data in submission.' });
       }
 
-      // Promisify stmt.run
-      await new Promise((resolve, reject) => {
-          stmt.run(
-            submissionId, userId, userName, pickNumber, 
-            teamName, playerName, playerPosition, playerSchool, submissionTimestamp,
-            (err) => {
-              if (err) {
-                console.error(`[Draft Submit ${submissionId}] Error inserting pick #${pickNumber}:`, err.message);
-                reject(err);
-              } else {
-                successfulInserts++;
-                resolve();
-              }
-            }
-          );
-      });
+      // Insert the new pick with the current submission_id
+      await client.query(insertSql, [
+        submissionId, userId, userName, pickNumber, 
+        teamName, playerName, playerPosition, playerSchool, submissionTimestamp
+      ]);
+      successCount++;
     } 
 
-    // Finalize statement (still synchronous)
-    await new Promise((resolve, reject) => {
-        stmt.finalize((err) => {
-            if(err) {
-                console.error(`[Draft Submit ${submissionId}] Error finalizing statement:`, err.message);
-                reject(err);
-            } else {
-                resolve();
-            }
-        });
+    await client.query('COMMIT');
+    
+    res.status(201).json({ 
+      message: 'Draft submitted successfully (overwritten previous)', 
+      submissionId: submissionId,
+      pickCount: successCount
     });
 
-    // Commit transaction
-    await runAsync('COMMIT', []);
-    
-    // Send success response
-    if (!res.headersSent) {
-        res.status(201).json({ message: 'Draft submitted successfully (overwritten previous)', submissionId: submissionId });
-    }
-
   } catch (error) {
-    console.error(`[Draft Submit] Transaction error:`, error.message);
+    console.error('Failed to save draft:', error.message);
     try {
-        await runAsync('ROLLBACK', []);
+      await client.query('ROLLBACK');
     } catch (rollbackError) {
-        console.error(`[Draft Submit] Error rolling back transaction:`, rollbackError.message);
+      console.error('Error during rollback:', rollbackError.message);
     }
-    // Send error response
-    if (!res.headersSent) {
-        res.status(500).json({ error: 'Failed to save draft due to a server error.' });
-    }
+    res.status(500).json({ error: 'Failed to save draft due to a server error.' });
+  } finally {
+    client.release();
   }
 });
 
-// --- Admin Endpoint for Actual Draft Submission ---
-app.post('/api/admin/submit-actual-draft', isAdmin, (req, res) => {
+// --- Admin Endpoint for Actual Draft Submission --- (Refactored for pg)
+app.post('/api/admin/submit-actual-draft', isAdmin, async (req, res) => {
   const { picks } = req.body;
-  const submissionTimestamp = new Date().toISOString();
+  const submissionTimestamp = new Date();
 
   if (!picks || !Array.isArray(picks) || picks.length === 0) {
     return res.status(400).json({ error: 'Invalid actual draft data provided' });
   }
 
-  // Use a transaction to replace old actual draft and insert new one
-  db.serialize(() => {
-    db.run('BEGIN TRANSACTION');
-    // Clear previous actual draft
-    db.run('DELETE FROM actual_draft_picks', (err) => {
-      if (err) {
-        console.error('Error clearing actual_draft_picks:', err.message);
-        db.run('ROLLBACK');
-        return res.status(500).json({ error: 'Failed to clear previous actual draft' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    for (const pick of picks) {
+      // Correctly access nested properties
+      const pickNumber = pick.team?.pick;
+      const teamName = pick.team?.name;
+      const playerName = pick.player?.name || null;
+      const playerPosition = pick.player?.position || null;
+      const playerSchool = pick.player?.school || null;
+
+      if (pickNumber === undefined || !teamName) {
+        console.error('Invalid pick data found, rolling back:', JSON.stringify(pick));
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Invalid pick data in submission.' });
       }
 
-      const sql = `INSERT INTO actual_draft_picks (
-        pick_number, team_name, player_name, player_position, player_school, submitted_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`;
-      const stmt = db.prepare(sql);
-      let errorOccurred = false;
-
-      picks.forEach(pick => {
-        if (errorOccurred) return;
-
-        const pickNumber = pick.team?.pick;
-        const teamName = pick.team?.name;
-        const playerName = pick.player?.name || null;
-        const playerPosition = pick.player?.position || null;
-        const playerSchool = pick.player?.school || null;
-
-        if (pickNumber === undefined || !teamName) {
-            console.error('Invalid actual pick data found:', pick);
-            errorOccurred = true;
-            return;
-        }
-
-        stmt.run(
-          pickNumber, teamName, playerName, playerPosition, playerSchool, submissionTimestamp,
-          (err) => {
-            if (err) {
-              console.error('Error inserting actual pick:', err.message);
-              errorOccurred = true;
-            }
-          }
-        );
-      });
-
-      stmt.finalize((err) => {
-        if (err) {
-          console.error('Error finalizing actual draft statement:', err.message);
-          errorOccurred = true;
-        }
-        if (errorOccurred) {
-          db.run('ROLLBACK');
-          console.error('Actual draft transaction rolled back.');
-          if (!res.headersSent) {
-            res.status(500).json({ error: 'Failed to save actual draft picks.' });
-          }
-        } else {
-          db.run('COMMIT');
-          console.log(`Actual draft saved successfully at ${submissionTimestamp}`);
-          // --- Trigger Grading --- (To be implemented next)
-          gradeMockDrafts((gradingError, results) => {
-            if (gradingError) {
-              console.error("Grading failed:", gradingError);
-              // Still return success for submission, but maybe warn about grading
-              if (!res.headersSent) {
-                 res.status(201).json({ message: 'Actual draft submitted, but grading failed.', results: [] });
-              }
-            } else {
-              if (!res.headersSent) {
-                 res.status(201).json({ message: 'Actual draft submitted and grading complete.', results: results });
-              }
-            }
-          });
-          // -----------------------
-        }
-      });
-    });
-  });
-});
-
-// --- Grading Function --- 
-function gradeMockDrafts(callback) {
-  console.log("Starting grading process...");
-
-  let actualDraftPicks = {}; // Store as map: { pickNumber: { teamName, playerName, ... } }
-  let allMockDrafts = {}; // Store as map: { submissionId: { userName, submittedAt, picks: { pickNumber: { ... } } } }
-
-  // 1. Fetch Actual Draft
-  db.all('SELECT * FROM actual_draft_picks ORDER BY pick_number', [], (err, actualRows) => {
-    if (err) {
-      console.error('Error fetching actual draft:', err.message);
-      return callback(err);
-    }
-    if (actualRows.length === 0) {
-        console.warn("No actual draft found to grade against.");
-        return callback(null, []); // No actual draft, return empty results
-    }
-    actualRows.forEach(row => {
-        actualDraftPicks[row.pick_number] = row; 
-    });
-
-    // 2. Fetch All Mock Draft Picks
-    db.all('SELECT * FROM mock_draft_picks ORDER BY submission_id, pick_number', [], (err, mockRows) => {
-      if (err) {
-        console.error('Error fetching mock drafts:', err.message);
-        return callback(err);
+      try {
+        // First delete any existing pick with this number to ensure clean data
+        await client.query('DELETE FROM actual_draft_picks WHERE pick_number = $1', [pickNumber]);
+        
+        // Insert the new pick
+        const insertSql = `
+          INSERT INTO actual_draft_picks 
+          (pick_number, team_name, player_name, player_position, player_school, submitted_at)
+          VALUES ($1, $2, $3, $4, $5, $6)`;
+          
+        await client.query(insertSql, [
+          pickNumber, teamName, playerName, playerPosition, playerSchool, submissionTimestamp
+        ]);
+      } catch (insertError) {
+        console.error(`Error inserting pick #${pickNumber}:`, insertError.message);
+        throw insertError; // Re-throw to trigger the catch block
       }
+    }
 
-      // Group mock picks by submission_id
-      mockRows.forEach(row => {
-        if (!allMockDrafts[row.submission_id]) {
-          allMockDrafts[row.submission_id] = {
-            submissionId: row.submission_id,
-            userId: row.user_id,
-            userName: row.user_name,
-            submittedAt: row.submitted_at,
-            picks: {}
-          };
-        }
-        allMockDrafts[row.submission_id].picks[row.pick_number] = row;
-      });
-
-      // 3. Perform Grading for each submission
-      const results = Object.values(allMockDrafts).map(mockSubmission => {
-        let correctPicksCount = 0;
-        let firstMissPickIndex = Infinity; 
-        let firstMissTeamIndex = Infinity;
-        let pickComparisonFailed = false;
-
-        for (let pickNum = 1; pickNum <= 32; pickNum++) { // Assuming 32 picks
-            const actualPick = actualDraftPicks[pickNum];
-            const mockPick = mockSubmission.picks[pickNum];
-
-            if (!actualPick) {
-                console.warn(`Actual pick missing for pick number ${pickNum}. Cannot grade fully.`);
-                pickComparisonFailed = true;
-                // Treat as a miss for tie-breaking maybe?
-                if (firstMissPickIndex === Infinity) firstMissPickIndex = pickNum;
-                if (firstMissTeamIndex === Infinity) firstMissTeamIndex = pickNum;
-                continue; // Or break, depending on desired handling
+    await client.query('COMMIT');
+    
+    // **** Generate leaderboard after successful submission ****
+    try {
+      // Get the actual draft picks we just saved
+      const actualDraft = await getActualDraftPicks();
+      
+      if (actualDraft.length === 0) {
+        return res.status(201).json({ 
+          message: 'Actual draft submitted, but there were no picks to grade with.', 
+          results: [] 
+        });
+      }
+      
+      // Get all mock drafts
+      const allMockDrafts = await getAllMockDraftsGrouped();
+      
+      if (Object.keys(allMockDrafts).length === 0) {
+        return res.status(201).json({ 
+          message: 'Actual draft submitted, but no mock drafts found to grade.', 
+          results: [] 
+        });
+      }
+      
+      // Grade each mock draft and generate the leaderboard
+      const leaderboard = [];
+      
+      for (const userId in allMockDrafts) {
+        const userDraft = allMockDrafts[userId];
+        
+        // Calculate score using our grading function
+        const score = gradeSingleMockDraft(userDraft.picks, actualDraft);
+        
+        // Find first player miss and first team miss for tiebreakers
+        let firstMissPickIndex = 33; // Higher than max pick
+        let firstMissTeamIndex = 33; // Higher than max pick
+        
+        const actualPickMap = actualDraft.reduce((map, pick) => {
+          map[pick.pick_number] = pick;
+          return map;
+        }, {});
+        
+        userDraft.picks.forEach(mockPick => {
+          const pickNum = mockPick.pick_number;
+          const actualPick = actualPickMap[pickNum];
+          
+          if (actualPick) {
+            // Check for player mismatch
+            if (firstMissPickIndex === 33 && 
+                (!mockPick.player_name || mockPick.player_name !== actualPick.player_name)) {
+              firstMissPickIndex = pickNum;
             }
             
-            // Team Check (for tie-breaker 2)
-            if (firstMissTeamIndex === Infinity && (!mockPick || mockPick.team_name !== actualPick.team_name)) {
-                firstMissTeamIndex = pickNum;
+            // Check for team mismatch
+            if (firstMissTeamIndex === 33 && mockPick.team_name !== actualPick.team_name) {
+              firstMissTeamIndex = pickNum;
             }
-
-            // Player Check (for score and tie-breaker 1)
-            // Check if mock pick exists and player names match
-            if (mockPick && actualPick.player_name && mockPick.player_name === actualPick.player_name) {
-                correctPicksCount++;
-            } else {
-                // Record the first pick number where the player was wrong
-                if (firstMissPickIndex === Infinity) {
-                    firstMissPickIndex = pickNum;
-                }
-            }
-        }
+          }
+        });
         
-        // If all picks were correct, set index high for sorting
-        if (firstMissPickIndex === Infinity) firstMissPickIndex = 33; // Higher than max pick number
-        if (firstMissTeamIndex === Infinity) firstMissTeamIndex = 33;
-
-        return {
-          submissionId: mockSubmission.submissionId,
-          userName: mockSubmission.userName,
-          submittedAt: mockSubmission.submittedAt,
-          correctPicks: correctPicksCount,
-          firstMissPickIndex: firstMissPickIndex, // Lower is worse
-          firstMissTeamIndex: firstMissTeamIndex, // Lower is worse
-          pickComparisonFailed: pickComparisonFailed // Flag if actual draft was incomplete
-        };
-      });
-
-      // 4. Sort Results based on rules
-      results.sort((a, b) => {
-        // Rule 1: Correct Picks (Descending)
+        leaderboard.push({
+          submissionId: userDraft.submissionId || userId, // Fallback to userId if no submissionId
+          userId: userId,
+          userName: userDraft.userName,
+          correctPicks: score,
+          firstMissPickIndex: firstMissPickIndex,
+          firstMissTeamIndex: firstMissTeamIndex, 
+          submittedAt: userDraft.submittedAt,
+          pickComparisonFailed: false // Set to true if there was an issue comparing
+        });
+      }
+      
+      // Sort leaderboard by correctPicks (descending), then by tiebreaker fields
+      leaderboard.sort((a, b) => {
+        // Primary sort: correct picks (descending)
         if (a.correctPicks !== b.correctPicks) {
           return b.correctPicks - a.correctPicks;
         }
-        // Rule 2: First Player Miss (Descending Index - higher index is better)
+        
+        // Tiebreaker 1: First miss pick index (descending - higher is better)
         if (a.firstMissPickIndex !== b.firstMissPickIndex) {
           return b.firstMissPickIndex - a.firstMissPickIndex;
         }
-        // Rule 3: First Team Miss (Descending Index - higher index is better)
+        
+        // Tiebreaker 2: First miss team index (descending - higher is better)
         if (a.firstMissTeamIndex !== b.firstMissTeamIndex) {
           return b.firstMissTeamIndex - a.firstMissTeamIndex;
         }
-        // Rule 4: Submission Time (Ascending)
+        
+        // Tiebreaker 3: Submission time (ascending - earlier is better)
         return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
       });
+      
+      // Return both the success message and the grading results
+      return res.status(201).json({ 
+        message: 'Actual draft submitted and grading complete.', 
+        results: leaderboard 
+      });
+      
+    } catch (gradingError) {
+      console.error('Error during grading process:', gradingError.message);
+      // Still return success for submission, but note the grading failure
+      return res.status(201).json({ 
+        message: 'Actual draft submitted, but an error occurred during grading.', 
+        error: gradingError.message,
+        results: []
+      });
+    }
 
-      console.log("Grading complete.");
-      callback(null, results);
+  } catch (error) {
+    console.error('Transaction error:', error.message);
+    
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Error during rollback:', rollbackError.message);
+    }
+    
+    res.status(500).json({ error: 'Failed to save actual draft due to a server error.' });
+  } finally {
+    client.release();
+  }
+});
+
+// --- API Endpoint to Get User's Mock Draft ---
+app.get('/api/drafts', async (req, res) => {
+  if (!req.isAuthenticated() || !req.user) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  const userId = req.user.id;
+
+  try {
+    const sql = `SELECT pick_number, team_name, player_name, player_position, player_school, submitted_at 
+                 FROM mock_draft_picks 
+                 WHERE user_id = $1 
+                 ORDER BY pick_number ASC`;
+    const { rows } = await pool.query(sql, [userId]);
+    
+    res.json(rows); 
+
+  } catch (error) {
+    console.error(`[Get User Draft ${userId}] Error fetching draft:`, error.message);
+    res.status(500).json({ error: 'Failed to fetch user mock draft.' });
+  }
+});
+
+// --- API Endpoint to Get Actual Draft ---
+app.get('/api/actual-draft', async (req, res) => {
+  try {
+    const sql = `SELECT pick_number, team_name, player_name, player_position, player_school, submitted_at 
+                 FROM actual_draft_picks 
+                 ORDER BY pick_number ASC`;
+    const { rows } = await pool.query(sql);
+    res.json(rows);
+  } catch (error) {
+    console.error('[Get Actual Draft] Error fetching actual draft:', error.message);
+    res.status(500).json({ error: 'Failed to fetch actual draft.' });
+  }
+});
+
+// --- API Endpoint to Get Leaderboard (All Mock Drafts + Scores) ---
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    // Get actual draft picks
+    const actualDraft = await getActualDraftPicks();
+    
+    if (!actualDraft || actualDraft.length === 0) {
+      return res.status(404).json({ message: "Actual draft data not available yet for grading." });
+    }
+
+    // Get all mock drafts grouped by user
+    const allMockDrafts = await getAllMockDraftsGrouped();
+    
+    if (!allMockDrafts || Object.keys(allMockDrafts).length === 0) {
+      return res.status(404).json({ message: "No mock drafts submitted yet." });
+    }
+
+    // Create leaderboard entries
+    const leaderboard = [];
+    for (const userId in allMockDrafts) {
+      const userDraft = allMockDrafts[userId];
+      
+      const result = gradeSingleMockDraft(userDraft.picks, actualDraft);
+      
+      leaderboard.push({
+        submissionId: userDraft.submissionId || userId,
+        userName: userDraft.userName,
+        correctPicks: result.correctPicks,
+        firstMissPickIndex: result.firstMissPickIndex,
+        firstMissTeamIndex: result.firstMissTeamIndex,
+        submittedAt: userDraft.submittedAt,
+        pickComparisonFailed: false
+      });
+    }
+
+    // Sort leaderboard:
+    // 1. By correct picks (descending)
+    // 2. By first miss pick index (descending - higher is better)
+    // 3. By first miss team index (descending - higher is better)
+    // 4. By submission time (ascending - earlier is better)
+    leaderboard.sort((a, b) => {
+      // Primary sort: correct picks (descending)
+      if (a.correctPicks !== b.correctPicks) {
+        return b.correctPicks - a.correctPicks;
+      }
+      
+      // Tiebreaker 1: First miss pick index (descending - higher is better)
+      if (a.firstMissPickIndex !== b.firstMissPickIndex) {
+        return b.firstMissPickIndex - a.firstMissPickIndex;
+      }
+      
+      // Tiebreaker 2: First miss team index (descending - higher is better)
+      if (a.firstMissTeamIndex !== b.firstMissTeamIndex) {
+        return b.firstMissTeamIndex - a.firstMissTeamIndex;
+      }
+      
+      // Tiebreaker 3: Submission time (ascending - earlier is better)
+      return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
     });
+
+    res.json(leaderboard);
+
+  } catch (error) {
+    console.error('Error generating leaderboard:', error.message);
+    res.status(500).json({ error: 'Failed to generate leaderboard.' });
+  }
+});
+
+// --- Helper Functions for Database Interaction ---
+
+async function getActualDraftPicks() {
+  const sql = `SELECT pick_number, team_name, player_name, player_position, player_school 
+               FROM actual_draft_picks 
+               ORDER BY pick_number ASC`;
+  try {
+    const { rows } = await pool.query(sql);
+    return rows;
+  } catch (error) {
+    console.error("Error fetching actual draft picks:", error.message);
+    throw error;
+  }
+}
+
+async function getAllMockDraftsGrouped() {
+  // Simplified SQL using a more robust approach to get latest submissions
+  const sql = `
+      WITH UserLatestSubmission AS (
+          -- First, get the latest submission_id for each user based on submitted_at timestamp
+          SELECT DISTINCT ON (user_id) 
+              user_id, 
+              submission_id,
+              submitted_at
+          FROM mock_draft_picks
+          ORDER BY user_id, submitted_at DESC
+      )
+      -- Then get all picks for those submission_ids
+      SELECT 
+          mp.user_id,
+          mp.user_name,
+          mp.submission_id,
+          mp.pick_number,
+          mp.team_name,
+          mp.player_name,
+          mp.player_position,
+          mp.player_school,
+          uls.submitted_at
+      FROM mock_draft_picks mp
+      JOIN UserLatestSubmission uls 
+          ON mp.user_id = uls.user_id 
+          AND mp.submission_id = uls.submission_id
+      ORDER BY mp.user_id, mp.pick_number
+  `;
+  
+  try {
+    const { rows } = await pool.query(sql);
+    
+    if (rows.length === 0) {
+      return {};
+    }
+    
+    // Group by user_id
+    const groupedDrafts = {};
+
+    rows.forEach(row => {
+      if (!groupedDrafts[row.user_id]) {
+        groupedDrafts[row.user_id] = {
+          userName: row.user_name,
+          submittedAt: row.submitted_at,
+          submissionId: row.submission_id,
+          picks: []
+        };
+      }
+      
+      groupedDrafts[row.user_id].picks.push({
+        pick_number: row.pick_number,
+        team_name: row.team_name,
+        player_name: row.player_name,
+        player_position: row.player_position,
+        player_school: row.player_school
+      });
+    });
+    
+    return groupedDrafts;
+  } catch (error) {
+    console.error("Error fetching mock drafts:", error.message);
+    throw error;
+  }
+}
+
+// --- Grading Logic ---
+
+function gradeSingleMockDraft(mockPicks, actualPicks) {
+  if (!mockPicks || !Array.isArray(mockPicks) || mockPicks.length === 0) {
+    return { correctPicks: 0, firstMissPickIndex: 0, firstMissTeamIndex: 0 };
+  }
+  
+  if (!actualPicks || !Array.isArray(actualPicks) || actualPicks.length === 0) {
+    return { correctPicks: 0, firstMissPickIndex: 0, firstMissTeamIndex: 0 };
+  }
+  
+  // Create a map for quick look-up of actual picks by pick_number
+  const actualPicksMap = actualPicks.reduce((map, pick) => {
+    if (pick.pick_number !== undefined && pick.pick_number !== null) {
+      map[pick.pick_number] = pick;
+    }
+    return map;
+  }, {});
+
+  // Score is now ONLY the count of exact matches (correct player at correct position)
+  let correctPicks = 0;
+  
+  // Track the first miss for tiebreakers
+  let firstMissPickIndex = Infinity; // For players (will be set to first pick where player is wrong)
+  let firstMissTeamIndex = Infinity; // For teams (will be set to first pick where team is wrong)
+  
+  // Sort mock picks by pick_number to ensure sequential processing
+  const sortedMockPicks = [...mockPicks].sort((a, b) => 
+    (a.pick_number || 0) - (b.pick_number || 0)
+  );
+  
+  // Process each pick to calculate score and tiebreakers
+  sortedMockPicks.forEach(mockPick => {
+    if (!mockPick || typeof mockPick !== 'object' || mockPick.pick_number === undefined) {
+      return;
+    }
+    
+    const pickNum = mockPick.pick_number;
+    const actualPick = actualPicksMap[pickNum];
+    
+    if (actualPick) {
+      // Player match check (for score and first tiebreaker)
+      const isPlayerMatch = mockPick.player_name && 
+                            actualPick.player_name && 
+                            mockPick.player_name === actualPick.player_name;
+      
+      // Team match check (for second tiebreaker)
+      const isTeamMatch = mockPick.team_name === actualPick.team_name;
+      
+      // Update the score for exact player matches
+      if (isPlayerMatch) {
+        correctPicks++;
+      } 
+      // Record first player miss for tiebreaker 1
+      else if (firstMissPickIndex === Infinity) {
+        firstMissPickIndex = pickNum;
+      }
+      
+      // Record first team miss for tiebreaker 2
+      if (!isTeamMatch && firstMissTeamIndex === Infinity) {
+        firstMissTeamIndex = pickNum;
+      }
+    }
   });
+  
+  // If there were no misses, set indices to max value
+  if (firstMissPickIndex === Infinity) {
+    firstMissPickIndex = 999; // Higher than max pick number
+  }
+  
+  if (firstMissTeamIndex === Infinity) {
+    firstMissTeamIndex = 999; // Higher than max pick number
+  }
+
+  return {
+    correctPicks,
+    firstMissPickIndex,
+    firstMissTeamIndex
+  };
 }
 
 // The "catchall" handler: for any request that doesn't
@@ -456,7 +688,30 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/build/index.html'));
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
+// Correctly assign the server instance from app.listen
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
+});
+
+// Re-implement shutdown using the server instance
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => { 
+    console.log('HTTP server closed');
+    pool.end(() => {
+      console.log('PostgreSQL pool has ended');
+      process.exit(0);
+    });
+  });
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT signal received: closing HTTP server');
+  server.close(() => { 
+    console.log('HTTP server closed');
+    pool.end(() => {
+      console.log('PostgreSQL pool has ended');
+      process.exit(0);
+    });
+  });
 }); 
