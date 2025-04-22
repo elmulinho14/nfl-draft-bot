@@ -3,6 +3,7 @@ run = "cd server && npm install && cd ../client && npm install && npm run build 
 
 # Language configuration (optional but good practice)
 language = "nodejs"
+modules = ["postgresql-16"]
 
 [deployment]
 deploymentTarget = "cloudrun"
