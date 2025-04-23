@@ -193,17 +193,13 @@ app.post('/api/drafts', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Explicitly delete ALL previous picks for this USERNAME instead of user_id
-    const deleteSql = `DELETE FROM mock_draft_picks WHERE user_name = $1`;
-    await client.query(deleteSql, [userName]);
+    const deleteSql = `DELETE FROM mock_draft_picks WHERE user_id = $1`;
+    await client.query(deleteSql, [userId]);
 
     const insertSql = `INSERT INTO mock_draft_picks (
       submission_id, user_id, user_name, pick_number, 
       team_name, player_name, player_position, player_school, submitted_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
-    
-    // Track insertion results
-    let successCount = 0;
 
     for (const pick of picks) {
       const pickNumber = pick.team?.pick;
@@ -213,34 +209,25 @@ app.post('/api/drafts', async (req, res) => {
       const playerSchool = pick.player?.school || null;
 
       if (pickNumber === undefined || !teamName) {
+        console.error(`[Draft Submit ${submissionId}] Invalid pick data found, rolling back:`, pick);
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Invalid pick data in submission.' });
       }
 
-      // Insert the new pick with the current submission_id
       await client.query(insertSql, [
-        submissionId, userId, userName, pickNumber, 
+            submissionId, userId, userName, pickNumber, 
         teamName, playerName, playerPosition, playerSchool, submissionTimestamp
       ]);
-      successCount++;
     } 
 
     await client.query('COMMIT');
     
-    res.status(201).json({ 
-      message: 'Draft submitted successfully (overwritten previous)', 
-      submissionId: submissionId,
-      pickCount: successCount
-    });
+        res.status(201).json({ message: 'Draft submitted successfully (overwritten previous)', submissionId: submissionId });
 
   } catch (error) {
-    console.error('Failed to save draft:', error.message);
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error('Error during rollback:', rollbackError.message);
-    }
-    res.status(500).json({ error: 'Failed to save draft due to a server error.' });
+    console.error(`[Draft Submit ${submissionId}] Transaction error:`, error.message);
+    await client.query('ROLLBACK');
+        res.status(500).json({ error: 'Failed to save draft due to a server error.' });
   } finally {
     client.release();
   }
@@ -258,158 +245,42 @@ app.post('/api/admin/submit-actual-draft', isAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
-    for (const pick of picks) {
-      // Correctly access nested properties
-      const pickNumber = pick.team?.pick;
-      const teamName = pick.team?.name;
-      const playerName = pick.player?.name || null;
-      const playerPosition = pick.player?.position || null;
-      const playerSchool = pick.player?.school || null;
 
-      if (pickNumber === undefined || !teamName) {
-        console.error('Invalid pick data found, rolling back:', JSON.stringify(pick));
+    const upsertSql = `
+      INSERT INTO actual_draft_picks (pick_number, team_name, player_name, player_position, player_school, submitted_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (pick_number) 
+      DO UPDATE SET 
+        team_name = EXCLUDED.team_name,
+        player_name = EXCLUDED.player_name,
+        player_position = EXCLUDED.player_position,
+        player_school = EXCLUDED.player_school,
+        submitted_at = EXCLUDED.submitted_at`;
+
+    for (const pick of picks) {
+        const pickNumber = pick.team?.pick;
+        const teamName = pick.team?.name;
+        const playerName = pick.player?.name || null;
+        const playerPosition = pick.player?.position || null;
+        const playerSchool = pick.player?.school || null;
+
+        if (pickNumber === undefined || !teamName) {
+        console.error(`[Admin Submit Actual] Invalid pick data found, rolling back:`, pick);
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Invalid pick data in submission.' });
       }
 
-      try {
-        // First delete any existing pick with this number to ensure clean data
-        await client.query('DELETE FROM actual_draft_picks WHERE pick_number = $1', [pickNumber]);
-        
-        // Insert the new pick
-        const insertSql = `
-          INSERT INTO actual_draft_picks 
-          (pick_number, team_name, player_name, player_position, player_school, submitted_at)
-          VALUES ($1, $2, $3, $4, $5, $6)`;
-          
-        await client.query(insertSql, [
-          pickNumber, teamName, playerName, playerPosition, playerSchool, submissionTimestamp
-        ]);
-      } catch (insertError) {
-        console.error(`Error inserting pick #${pickNumber}:`, insertError.message);
-        throw insertError; // Re-throw to trigger the catch block
-      }
+      await client.query(upsertSql, [
+        pickNumber, teamName, playerName, playerPosition, playerSchool, submissionTimestamp
+      ]);
     }
 
     await client.query('COMMIT');
-    
-    // **** Generate leaderboard after successful submission ****
-    try {
-      // Get the actual draft picks we just saved
-      const actualDraft = await getActualDraftPicks();
-      
-      if (actualDraft.length === 0) {
-        return res.status(201).json({ 
-          message: 'Actual draft submitted, but there were no picks to grade with.', 
-          results: [] 
-        });
-      }
-      
-      // Get all mock drafts
-      const allMockDrafts = await getAllMockDraftsGrouped();
-      
-      if (Object.keys(allMockDrafts).length === 0) {
-        return res.status(201).json({ 
-          message: 'Actual draft submitted, but no mock drafts found to grade.', 
-          results: [] 
-        });
-      }
-      
-      // Grade each mock draft and generate the leaderboard
-      const leaderboard = [];
-      
-      for (const userId in allMockDrafts) {
-        const userDraft = allMockDrafts[userId];
-        
-        // Calculate score using our grading function
-        const score = gradeSingleMockDraft(userDraft.picks, actualDraft);
-        
-        // Find first player miss and first team miss for tiebreakers
-        let firstMissPickIndex = 33; // Higher than max pick
-        let firstMissTeamIndex = 33; // Higher than max pick
-        
-        const actualPickMap = actualDraft.reduce((map, pick) => {
-          map[pick.pick_number] = pick;
-          return map;
-        }, {});
-        
-        userDraft.picks.forEach(mockPick => {
-          const pickNum = mockPick.pick_number;
-          const actualPick = actualPickMap[pickNum];
-          
-          if (actualPick) {
-            // Check for player mismatch
-            if (firstMissPickIndex === 33 && 
-                (!mockPick.player_name || mockPick.player_name !== actualPick.player_name)) {
-              firstMissPickIndex = pickNum;
-            }
-            
-            // Check for team mismatch
-            if (firstMissTeamIndex === 33 && mockPick.team_name !== actualPick.team_name) {
-              firstMissTeamIndex = pickNum;
-            }
-          }
-        });
-        
-        leaderboard.push({
-          submissionId: userDraft.submissionId || userId, // Fallback to userId if no submissionId
-          userId: userId,
-          userName: userDraft.userName,
-          correctPicks: score,
-          firstMissPickIndex: firstMissPickIndex,
-          firstMissTeamIndex: firstMissTeamIndex, 
-          submittedAt: userDraft.submittedAt,
-          pickComparisonFailed: false // Set to true if there was an issue comparing
-        });
-      }
-      
-      // Sort leaderboard by correctPicks (descending), then by tiebreaker fields
-      leaderboard.sort((a, b) => {
-        // Primary sort: correct picks (descending)
-        if (a.correctPicks !== b.correctPicks) {
-          return b.correctPicks - a.correctPicks;
-        }
-        
-        // Tiebreaker 1: First miss pick index (descending - higher is better)
-        if (a.firstMissPickIndex !== b.firstMissPickIndex) {
-          return b.firstMissPickIndex - a.firstMissPickIndex;
-        }
-        
-        // Tiebreaker 2: First miss team index (descending - higher is better)
-        if (a.firstMissTeamIndex !== b.firstMissTeamIndex) {
-          return b.firstMissTeamIndex - a.firstMissTeamIndex;
-        }
-        
-        // Tiebreaker 3: Submission time (ascending - earlier is better)
-        return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
-      });
-      
-      // Return both the success message and the grading results
-      return res.status(201).json({ 
-        message: 'Actual draft submitted and grading complete.', 
-        results: leaderboard 
-      });
-      
-    } catch (gradingError) {
-      console.error('Error during grading process:', gradingError.message);
-      // Still return success for submission, but note the grading failure
-      return res.status(201).json({ 
-        message: 'Actual draft submitted, but an error occurred during grading.', 
-        error: gradingError.message,
-        results: []
-      });
-    }
+    res.status(201).json({ message: 'Actual draft submitted/updated successfully' });
 
   } catch (error) {
-    console.error('Transaction error:', error.message);
-    
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error('Error during rollback:', rollbackError.message);
-    }
-    
+    console.error('[Admin Submit Actual] Transaction error:', error.message);
+    await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to save actual draft due to a server error.' });
   } finally {
     client.release();
@@ -453,71 +324,61 @@ app.get('/api/actual-draft', async (req, res) => {
 });
 
 // --- API Endpoint to Get Leaderboard (All Mock Drafts + Scores) ---
+// This requires the grading logic to be implemented
 app.get('/api/leaderboard', async (req, res) => {
-  try {
-    // Get actual draft picks
-    const actualDraft = await getActualDraftPicks();
-    
-    if (!actualDraft || actualDraft.length === 0) {
-      return res.status(404).json({ message: "Actual draft data not available yet for grading." });
+    try {
+        console.log('[GET Leaderboard] Starting leaderboard generation');
+        
+        // Check if actual draft exists
+        const actualDraft = await getActualDraftPicks();
+        console.log(`[GET Leaderboard] Actual draft picks found: ${actualDraft.length}`);
+        
+        if (!actualDraft || actualDraft.length === 0) {
+            return res.status(404).json({ message: "Actual draft data not available yet for grading." });
+        }
+
+        // Check for any mock drafts in the database (sanity check)
+        const countResult = await pool.query('SELECT COUNT(*) as total FROM mock_draft_picks');
+        console.log(`[GET Leaderboard] Total mock draft picks in database: ${countResult.rows[0].total}`);
+        
+        // Count distinct users
+        const usersResult = await pool.query('SELECT COUNT(DISTINCT user_id) as users FROM mock_draft_picks');
+        console.log(`[GET Leaderboard] Distinct users with mock drafts: ${usersResult.rows[0].users}`);
+        
+        // Get all mock drafts grouped by user
+        console.log('[GET Leaderboard] Calling getAllMockDraftsGrouped()');
+        const allMockDrafts = await getAllMockDraftsGrouped();
+        console.log(`[GET Leaderboard] Mock drafts returned: ${Object.keys(allMockDrafts).length} users`);
+        
+        if (!allMockDrafts || Object.keys(allMockDrafts).length === 0) {
+            return res.status(404).json({ message: "No mock drafts submitted yet." });
+        }
+
+        const leaderboard = [];
+        for (const userId in allMockDrafts) {
+            const userDraft = allMockDrafts[userId];
+            const score = gradeSingleMockDraft(userDraft.picks, actualDraft);
+            leaderboard.push({
+                userId: userId,
+                userName: userDraft.userName,
+                score: score,
+                submittedAt: userDraft.submittedAt
+            });
+        }
+
+        leaderboard.sort((a, b) => {
+            if (b.score !== a.score) {
+                return b.score - a.score;
+            }
+            return new Date(a.submittedAt) - new Date(b.submittedAt);
+        });
+
+        res.json(leaderboard);
+
+    } catch (error) {
+        console.error('[Get Leaderboard] Error generating leaderboard:', error.message);
+        res.status(500).json({ error: 'Failed to generate leaderboard.' });
     }
-
-    // Get all mock drafts grouped by user
-    const allMockDrafts = await getAllMockDraftsGrouped();
-    
-    if (!allMockDrafts || Object.keys(allMockDrafts).length === 0) {
-      return res.status(404).json({ message: "No mock drafts submitted yet." });
-    }
-
-    // Create leaderboard entries
-    const leaderboard = [];
-    for (const userId in allMockDrafts) {
-      const userDraft = allMockDrafts[userId];
-      
-      const result = gradeSingleMockDraft(userDraft.picks, actualDraft);
-      
-      leaderboard.push({
-        submissionId: userDraft.submissionId || userId,
-        userName: userDraft.userName,
-        correctPicks: result.correctPicks,
-        firstMissPickIndex: result.firstMissPickIndex,
-        firstMissTeamIndex: result.firstMissTeamIndex,
-        submittedAt: userDraft.submittedAt,
-        pickComparisonFailed: false
-      });
-    }
-
-    // Sort leaderboard:
-    // 1. By correct picks (descending)
-    // 2. By first miss pick index (descending - higher is better)
-    // 3. By first miss team index (descending - higher is better)
-    // 4. By submission time (ascending - earlier is better)
-    leaderboard.sort((a, b) => {
-      // Primary sort: correct picks (descending)
-      if (a.correctPicks !== b.correctPicks) {
-        return b.correctPicks - a.correctPicks;
-      }
-      
-      // Tiebreaker 1: First miss pick index (descending - higher is better)
-      if (a.firstMissPickIndex !== b.firstMissPickIndex) {
-        return b.firstMissPickIndex - a.firstMissPickIndex;
-      }
-      
-      // Tiebreaker 2: First miss team index (descending - higher is better)
-      if (a.firstMissTeamIndex !== b.firstMissTeamIndex) {
-        return b.firstMissTeamIndex - a.firstMissTeamIndex;
-      }
-      
-      // Tiebreaker 3: Submission time (ascending - earlier is better)
-      return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
-    });
-
-    res.json(leaderboard);
-
-  } catch (error) {
-    console.error('Error generating leaderboard:', error.message);
-    res.status(500).json({ error: 'Failed to generate leaderboard.' });
-  }
 });
 
 // --- Helper Functions for Database Interaction ---
@@ -530,156 +391,164 @@ async function getActualDraftPicks() {
     const { rows } = await pool.query(sql);
     return rows;
   } catch (error) {
-    console.error("Error fetching actual draft picks:", error.message);
+    console.error("Error fetching actual draft picks:", error);
     throw error;
   }
 }
 
+// Helper to get all mock drafts, grouped by user (most recent submission per user)
 async function getAllMockDraftsGrouped() {
-  // Simplified SQL using a more robust approach to get latest submissions
-  const sql = `
-      WITH UserLatestSubmission AS (
-          -- First, get the latest submission_id for each user based on submitted_at timestamp
-          SELECT DISTINCT ON (user_id) 
-              user_id, 
-              submission_id,
-              submitted_at
-          FROM mock_draft_picks
-          ORDER BY user_id, submitted_at DESC
-      )
-      -- Then get all picks for those submission_ids
-      SELECT 
-          mp.user_id,
-          mp.user_name,
-          mp.submission_id,
-          mp.pick_number,
-          mp.team_name,
-          mp.player_name,
-          mp.player_position,
-          mp.player_school,
-          uls.submitted_at
-      FROM mock_draft_picks mp
-      JOIN UserLatestSubmission uls 
-          ON mp.user_id = uls.user_id 
-          AND mp.submission_id = uls.submission_id
-      ORDER BY mp.user_id, mp.pick_number
-  `;
-  
-  try {
-    const { rows } = await pool.query(sql);
+    console.log('[getAllMockDraftsGrouped] Starting to fetch mock drafts');
     
-    if (rows.length === 0) {
-      return {};
+    // First, check if we have any mock drafts at all
+    try {
+        const checkQuery = 'SELECT COUNT(*) as count FROM mock_draft_picks';
+        const checkResult = await pool.query(checkQuery);
+        console.log(`[getAllMockDraftsGrouped] Total mock draft picks found: ${checkResult.rows[0].count}`);
+        
+        if (checkResult.rows[0].count === '0') {
+            console.log('[getAllMockDraftsGrouped] No mock draft picks found in the database');
+            return {};
+        }
+    } catch (error) {
+        console.error('[getAllMockDraftsGrouped] Error checking for mock drafts:', error.message);
     }
     
-    // Group by user_id
-    const groupedDrafts = {};
+    // Revised SQL to use submission_id for fetching the latest complete draft per user
+    const sql = `
+        WITH LatestSubmissionInfo AS (
+            -- Find the latest submission timestamp for each user
+            SELECT
+                user_id,
+                MAX(submitted_at) as latest_submission_time
+            FROM mock_draft_picks
+            GROUP BY user_id
+        ),
+        LatestSubmissionIDs AS (
+            -- Find the submission_id associated with that latest timestamp
+            -- Use DISTINCT ON in case of exact timestamp ties (picks one submission_id)
+            SELECT DISTINCT ON (p.user_id) 
+                p.user_id,
+                p.submission_id,
+                lsi.latest_submission_time
+            FROM mock_draft_picks p
+            JOIN LatestSubmissionInfo lsi ON p.user_id = lsi.user_id AND p.submitted_at = lsi.latest_submission_time
+            ORDER BY p.user_id, p.submitted_at DESC -- Order to control which submission_id is picked by DISTINCT ON
+        )
+        -- Select all picks belonging to the latest submission_id for each user
+        SELECT 
+            p.user_id, 
+            p.user_name, 
+            p.pick_number, 
+            p.team_name, 
+            p.player_name, 
+            p.player_position, 
+            p.player_school,
+            lsids.latest_submission_time as submitted_at -- Use the determined latest time
+        FROM mock_draft_picks p
+        JOIN LatestSubmissionIDs lsids ON p.submission_id = lsids.submission_id -- Join using the submission_id
+        ORDER BY p.user_id, p.pick_number ASC;
+    `;
 
-    rows.forEach(row => {
-      if (!groupedDrafts[row.user_id]) {
-        groupedDrafts[row.user_id] = {
-          userName: row.user_name,
-          submittedAt: row.submitted_at,
-          submissionId: row.submission_id,
-          picks: []
-        };
-      }
-      
-      groupedDrafts[row.user_id].picks.push({
-        pick_number: row.pick_number,
-        team_name: row.team_name,
-        player_name: row.player_name,
-        player_position: row.player_position,
-        player_school: row.player_school
-      });
-    });
+    console.log('[getAllMockDraftsGrouped] Executing SQL query to fetch latest submissions');
     
-    return groupedDrafts;
-  } catch (error) {
-    console.error("Error fetching mock drafts:", error.message);
-    throw error;
-  }
+    try {
+        const { rows } = await pool.query(sql);
+        console.log(`[getAllMockDraftsGrouped] Query returned ${rows.length} rows`);
+        
+        // Debug the first few rows if any exist
+        if (rows.length > 0) {
+            console.log('[getAllMockDraftsGrouped] First row sample:', JSON.stringify(rows[0]));
+        } else {
+            console.log('[getAllMockDraftsGrouped] No rows returned from query');
+            
+            // Troubleshooting: Let's check each CTE separately
+            console.log('[getAllMockDraftsGrouped] Troubleshooting - checking LatestSubmissionInfo CTE');
+            const infoResult = await pool.query(`
+                SELECT user_id, latest_submission_time 
+                FROM (
+                    SELECT
+                        user_id,
+                        MAX(submitted_at) as latest_submission_time
+                    FROM mock_draft_picks
+                    GROUP BY user_id
+                ) as LatestSubmissionInfo
+            `);
+            console.log(`[getAllMockDraftsGrouped] LatestSubmissionInfo results: ${infoResult.rows.length} users`);
+            if (infoResult.rows.length > 0) {
+                console.log('[getAllMockDraftsGrouped] First user info:', JSON.stringify(infoResult.rows[0]));
+            }
+            
+            return {};
+        }
+        
+        const groupedDrafts = {};
+
+        rows.forEach(row => {
+            if (!groupedDrafts[row.user_id]) {
+                groupedDrafts[row.user_id] = {
+                    userName: row.user_name,
+                    submittedAt: row.submitted_at,
+                    picks: []
+                };
+            }
+            groupedDrafts[row.user_id].picks.push({
+                pick_number: row.pick_number,
+                team_name: row.team_name,
+                player_name: row.player_name,
+                player_position: row.player_position,
+                player_school: row.player_school
+            });
+        });
+        
+        console.log(`[getAllMockDraftsGrouped] Processed into ${Object.keys(groupedDrafts).length} user drafts`);
+        
+        // Log pick counts per user for debugging
+        Object.keys(groupedDrafts).forEach(userId => {
+            console.log(`[getAllMockDraftsGrouped] User ${userId} (${groupedDrafts[userId].userName}) has ${groupedDrafts[userId].picks.length} picks`);
+        });
+        
+        return groupedDrafts;
+    } catch (error) {
+        console.error("[getAllMockDraftsGrouped] Error fetching all mock drafts:", error);
+        // More detailed logging of the error
+        console.error("[getAllMockDraftsGrouped] Error details:", {
+            message: error.message,
+            code: error.code,
+            detail: error.detail,
+            hint: error.hint,
+            position: error.position,
+            routine: error.routine
+        });
+        throw error;
+    }
 }
 
 // --- Grading Logic ---
 
 function gradeSingleMockDraft(mockPicks, actualPicks) {
-  if (!mockPicks || !Array.isArray(mockPicks) || mockPicks.length === 0) {
-    return { correctPicks: 0, firstMissPickIndex: 0, firstMissTeamIndex: 0 };
-  }
-  
-  if (!actualPicks || !Array.isArray(actualPicks) || actualPicks.length === 0) {
-    return { correctPicks: 0, firstMissPickIndex: 0, firstMissTeamIndex: 0 };
-  }
-  
-  // Create a map for quick look-up of actual picks by pick_number
-  const actualPicksMap = actualPicks.reduce((map, pick) => {
-    if (pick.pick_number !== undefined && pick.pick_number !== null) {
-      map[pick.pick_number] = pick;
-    }
-    return map;
-  }, {});
+    let score = 0;
+    const actualPicksMap = actualPicks.reduce((map, pick) => {
+        map[pick.pick_number] = pick;
+        return map;
+    }, {});
 
-  // Score is now ONLY the count of exact matches (correct player at correct position)
-  let correctPicks = 0;
-  
-  // Track the first miss for tiebreakers
-  let firstMissPickIndex = Infinity; // For players (will be set to first pick where player is wrong)
-  let firstMissTeamIndex = Infinity; // For teams (will be set to first pick where team is wrong)
-  
-  // Sort mock picks by pick_number to ensure sequential processing
-  const sortedMockPicks = [...mockPicks].sort((a, b) => 
-    (a.pick_number || 0) - (b.pick_number || 0)
-  );
-  
-  // Process each pick to calculate score and tiebreakers
-  sortedMockPicks.forEach(mockPick => {
-    if (!mockPick || typeof mockPick !== 'object' || mockPick.pick_number === undefined) {
-      return;
-    }
-    
-    const pickNum = mockPick.pick_number;
-    const actualPick = actualPicksMap[pickNum];
-    
-    if (actualPick) {
-      // Player match check (for score and first tiebreaker)
-      const isPlayerMatch = mockPick.player_name && 
-                            actualPick.player_name && 
-                            mockPick.player_name === actualPick.player_name;
-      
-      // Team match check (for second tiebreaker)
-      const isTeamMatch = mockPick.team_name === actualPick.team_name;
-      
-      // Update the score for exact player matches
-      if (isPlayerMatch) {
-        correctPicks++;
-      } 
-      // Record first player miss for tiebreaker 1
-      else if (firstMissPickIndex === Infinity) {
-        firstMissPickIndex = pickNum;
-      }
-      
-      // Record first team miss for tiebreaker 2
-      if (!isTeamMatch && firstMissTeamIndex === Infinity) {
-        firstMissTeamIndex = pickNum;
-      }
-    }
-  });
-  
-  // If there were no misses, set indices to max value
-  if (firstMissPickIndex === Infinity) {
-    firstMissPickIndex = 999; // Higher than max pick number
-  }
-  
-  if (firstMissTeamIndex === Infinity) {
-    firstMissTeamIndex = 999; // Higher than max pick number
-  }
+    mockPicks.forEach(mockPick => {
+        const actualPick = actualPicksMap[mockPick.pick_number];
+        if (actualPick) {
+            if (mockPick.player_name && mockPick.player_name === actualPick.player_name) {
+                score += 5;
+            }
+            else if (mockPick.player_name && actualPicks.some(ap => ap.player_name === mockPick.player_name)) {
+                 score += 2;
+            }
+            else if (mockPick.player_position && mockPick.player_position === actualPick.player_position && mockPick.team_name === actualPick.team_name) {
+                score += 1;
+            }
+        }
+    });
 
-  return {
-    correctPicks,
-    firstMissPickIndex,
-    firstMissTeamIndex
-  };
+    return score;
 }
 
 // The "catchall" handler: for any request that doesn't

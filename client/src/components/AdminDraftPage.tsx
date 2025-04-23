@@ -367,7 +367,7 @@ const AdminDraftPage: React.FC = () => {
       console.error('Admin Draft not complete yet!');
       return;
     }
-    
+    console.log("Submitting ACTUAL draft:", picks);
     setIsSubmitting(true); // Set loading state
     setGradingResults(null); // Clear previous results
 
@@ -390,13 +390,7 @@ const AdminDraftPage: React.FC = () => {
       } else {
         console.log('Actual draft submitted, grading results:', result);
         alert(result.message || 'Actual draft submitted successfully!');
-        
-        // Check results format and adapt if needed
-        if (result.results && Array.isArray(result.results)) {
-          setGradingResults(result.results);
-        } else {
-          setGradingResults([]);
-        }
+        setGradingResults(result.results || []); // Set the grading results from response
       }
     } catch (error) {
       console.error('Network or other error submitting actual draft:', error);

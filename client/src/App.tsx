@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage';
 import WelcomePage from './components/WelcomePage';
 import DraftPage from './components/DraftPage';
 import AdminDraftPage from './components/AdminDraftPage';
+import MyDraftPage from './pages/MyDraftPage';
 
 interface User {
   id: string;
@@ -85,6 +86,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <DraftPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route 
+            path="/mydraft" 
+            element={
+              <ProtectedRoute>
+                <MyDraftPage />
               </ProtectedRoute>
             }
           />
